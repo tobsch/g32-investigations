@@ -1,0 +1,11 @@
+# Build artifacts
+owgctl/owgctl
+*.bin
+# Local secrets / account (never commit)
+.env
+# Cloud export output
+owgctl/firmware/
+owgctl/sessions/
+owgctl/backup*/
+# OS
+.DS_Store

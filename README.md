@@ -1,0 +1,81 @@
+# g32-investigations — toward "Open Otto"
+
+Making the **Otto Wilde G32 Connected** gas grill fully usable **locally, without the manufacturer
+cloud**. Research notes, a reverse-engineered protocol reference, and a small tool.
+
+## Why
+
+Otto Wilde Grillers wound down at the end of 2025; the brand moved to Miele, and there is **no
+guarantee that the app/cloud keeps running**. When the cloud goes dark, connected G32 grills lose
+their smart features. This project is about making sure they don't — for your own grill, purely
+locally.
+
+## The plan (Open Otto)
+
+Three layers, from "works today" to "fully open":
+
+1. **Read locally** — get temperatures, core-probes, gas level, hood, light into **Home Assistant**
+   over Bluetooth LE, no cloud login. The community already solved this well (see credits); this repo
+   corroborates it and documents the protocol.
+2. **Control locally** — set grill mode, hood-light threshold, high-temp warning, and calibrate the
+   gas scale over BLE (no cloud). Documented here and supported by the `owgctl` tool.
+3. **Fully open** — replace the vendor cloud entirely:
+   - a **local replacement for the WiFi socket** the grill phones home to, and ultimately
+   - **custom firmware (ESPHome) on the grill's own ESP32**, so no vendor code runs at all.
+   This is the frontier — nobody has opened the grill yet. See `notes on hardware` below.
+
+The point of "Open Otto" is not to compete with the existing community tools, but to **combine**
+them and push the two layers that are still open (local control, and a truly cloud-free / open-firmware
+grill), with a clean, shared protocol reference as the common base.
+
+## What's in here
+
+- **[`PROTOCOL.md`](./PROTOCOL.md)** — the reverse-engineered local protocol: BLE GATT characteristics
+  (9elements) and the legacy 28-byte frame, read + write formats, gas-scale calibration, the WiFi
+  socket, and how the pieces fit. Derived from the decompiled app (Flutter) and ESP32 firmware
+  (Ghidra/Xtensa), cross-checked against community work.
+- **[`owgctl/`](./owgctl)** — a small Go tool:
+  - **local, cloud-free:** `ble scan` / `ble read` (→ MQTT / Home Assistant), `ble set` (control),
+    `decode` / `replay` (offline), `serve-socket` (experimental local cloud-socket capture/replacement).
+  - **backup while the cloud lives:** `export` (your grills + firmware + session history, own account).
+  - Home Assistant alarm automations in `owgctl/homeassistant/`.
+
+## Status
+
+- Protocol (BLE read + write, gas calibration, legacy frame, socket registration): **documented**,
+  decompiled from app **and** firmware, and independently corroborated by the community.
+- `owgctl`: builds, unit-tested for the decode/pipeline logic. The BLE/MQTT/serve paths compile and
+  are logically complete but **not yet verified against a physical grill**.
+- Firmware version matters: community BLE tools need **1.4.5** (9elements); factory version code 13
+  behaves differently. Check with `owgctl ble scan` on your grill.
+
+## Hardware (for the open-firmware frontier)
+
+From firmware decompilation (to be confirmed by opening a grill):
+
+- SoC: **classic ESP32** (not S3 — that's the community's external display board).
+- Temperatures: **bit-banged SPI** thermocouple front-end (CLK GPIO 18, MOSI GPIO 23), 8 channels,
+  register-configured chip (likely MAX31856 / ADS1118), polynomial linearization with cold-junction
+  compensation.
+- Gas scale (**GasBuddy**): external **UART** peripheral (4-pin GND/+5V/RX+TX) with its own
+  **STM32F030** + ADCs; the grill polls it for a finished weight.
+- The electronics live in the **control panel (OPS panel)**.
+
+Open questions that need a teardown: exact thermocouple chip + MISO/CS pins, and the ESP32's
+**Secure Boot / flash-encryption** status (the go/no-go for flashing custom firmware).
+
+## Credits
+
+Independent community projects this builds on / cross-checks with:
+
+- [sagdusmir/G32-Grill-Display-480x320-BTpref](https://github.com/sagdusmir/G32-Grill-Display-480x320-BTpref)
+  and 320x172 variant — cloud-free BLE → ESPHome display, tested on firmware 1.4.5.
+- [zaubii/owg-g32-ha-integration](https://github.com/zaubii/owg-g32-ha-integration) — Home Assistant
+  integration via the (cloud) socket.
+- [JBecker32/G32-Display-480x320-HACS](https://github.com/JBecker32/G32-Display-480x320-HACS).
+- Discussion in the Grillsportverein "Otto Wilde G32 | Smarthome" thread.
+
+## Disclaimer & license
+
+For interoperability with **your own** device. Not affiliated with or endorsed by Otto Wilde / Miele.
+No manufacturer code or credentials are included. Licensed under the **MIT License** (see `LICENSE`).

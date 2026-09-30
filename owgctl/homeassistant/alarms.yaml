@@ -1,0 +1,81 @@
+# Home-Assistant-Automationen für den Otto Wilde G32 (lokal, ohne Hersteller-Cloud).
+#
+# Ersetzt die Push-Alarme der Hersteller-App. Voraussetzung: owgctl läuft mit
+#   owgctl ble read --mqtt tcp://<broker>:1883
+# und HA hat die Entitäten per MQTT-Discovery angelegt. Entitäts-IDs folgen dem
+# Muster sensor.owg_<serial>_<key> bzw. binary_sensor.owg_<serial>_<key>.
+#
+# Seriennummer hier unten anpassen (Beispiel: 12345678). Ziel-Kerntemperatur
+# über die Helfer-Entität input_number.grill_ziel_kern setzen (Definition unten).
+#
+# Einbinden: als Package unter homeassistant: packages: oder Inhalt in die
+# jeweiligen automations.yaml / configuration.yaml übernehmen.
+
+input_number:
+  grill_ziel_kern:
+    name: Grill Ziel-Kerntemperatur
+    min: 40
+    max: 120
+    step: 1
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer
+
+automation:
+  - alias: "Grill – Kerntemperatur erreicht"
+    description: "Meldet, wenn Fühler 1 die eingestellte Zieltemperatur erreicht."
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.owg_12345678_probe1
+        above: input_number.grill_ziel_kern
+    action:
+      - service: notify.notify
+        data:
+          title: "Grill fertig 🥩"
+          message: >-
+            Kerntemperatur {{ states('sensor.owg_12345678_probe1') }} °C erreicht
+            (Ziel {{ states('input_number.grill_ziel_kern') }} °C).
+    mode: single
+
+  - alias: "Grill – Gas fast leer"
+    description: "Warnt, wenn der Gasvorrat unter 15 % fällt."
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.owg_12345678_gas_percent
+        below: 15
+    action:
+      - service: notify.notify
+        data:
+          title: "Gas fast leer ⛽"
+          message: "Nur noch {{ states('sensor.owg_12345678_gas_percent') }} % Gas."
+    mode: single
+
+  - alias: "Grill – Haube zu lange offen"
+    description: "Warnt, wenn die Haube offen ist, während der Grill heiß ist."
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.owg_12345678_hood_open
+        to: "on"
+        for: "00:03:00"
+    condition:
+      - condition: numeric_state
+        entity_id: sensor.owg_12345678_zone1
+        above: 100
+    action:
+      - service: notify.notify
+        data:
+          title: "Haube offen 🔥"
+          message: "Haube ist seit 3 Min offen, Zone 1 bei {{ states('sensor.owg_12345678_zone1') }} °C."
+    mode: single
+
+  - alias: "Grill – Übertemperatur-Warnung aktiv"
+    description: "Reicht die geräteeigene Übertemperatur-Warnung als HA-Meldung weiter."
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.owg_12345678_temp_warning_active
+        to: "on"
+    action:
+      - service: notify.notify
+        data:
+          title: "Übertemperatur ⚠️"
+          message: "Der Grill meldet Übertemperatur."
+    mode: single
