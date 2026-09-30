@@ -53,7 +53,10 @@ grill), with a clean, shared protocol reference as the common base.
 
 From firmware decompilation (to be confirmed by opening a grill):
 
-- SoC: **classic ESP32** (not S3 — that's the community's external display board).
+- SoC: **Ai-Thinker `ESP32-S` module — a classic ESP32** (not S3). Confirmed from a community board
+  photo (module marking `ESP32-S / FCC ID:2AHMR-ESP32S`), matching the firmware analysis (chip_id 0).
+  Board silk: `OTTO WILDE`, `Material: KB-6160`, `Version: OTTOG32C20…`; external antenna via IPEX.
+  The electronics sit in a metal-cased **control panel (OPS panel)** behind the front.
 - Temperatures: **bit-banged SPI** thermocouple front-end (CLK GPIO 18, MOSI GPIO 23), 8 channels,
   register-configured chip (likely MAX31856 / ADS1118), polynomial linearization with cold-junction
   compensation.
@@ -61,8 +64,14 @@ From firmware decompilation (to be confirmed by opening a grill):
   **STM32F030** + ADCs; the grill polls it for a finished weight.
 - The electronics live in the **control panel (OPS panel)**.
 
-Open questions that need a teardown: exact thermocouple chip + MISO/CS pins, and the ESP32's
-**Secure Boot / flash-encryption** status (the go/no-go for flashing custom firmware).
+Open questions that need a teardown: the exact thermocouple converter chip (not legible in any
+available photo) + MISO/CS pins, and the ESP32's **Secure Boot / flash-encryption** status (the
+go/no-go for flashing custom firmware).
+
+**Serial access** (for flashing ESPHome / reading eFuses): solder to the ESP32-S pads `TXD0` (GPIO1),
+`RXD0` (GPIO3), `GND`; for download mode also `IO0` (pull low at reset) and `EN`. Use a **3.3 V**
+USB-UART adapter (TX↔RX crossed). First read the eFuse / Secure-Boot status and take a full
+`esptool` flash dump **before** changing anything — there is no known recovery path otherwise.
 
 ## Credits
 
