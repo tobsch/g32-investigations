@@ -34,6 +34,8 @@ built with ESP-IDF v5.0.x, NimBLE, protocomm provisioning. See [`README.md`](./R
 | 14 | Gas-level indicator LED |
 | 34 | Hood sensor (input) |
 | 21 | Hood light (LEDC PWM output) |
+| 13, 33 | Front-panel buttons (input, interrupt) |
+| 26, 25 | Status LEDs (WiFi/BT, output) |
 | 35, 39 | Hardware-variant straps (input, read once at boot) |
 
 ## Temperature front-end
@@ -59,8 +61,8 @@ converter types**:
 External 4-pin peripheral (`GND, +5V, RX, TX`) with its own STM32F030; the grill polls it:
 
 - **UART1, TX = GPIO2, RX = GPIO15, 9600 baud, 8N1**, no RTS/CTS.
-- Poll ~1/s: send a fixed 4-byte command, read the reply, **weight = reply bytes [2:3], big-endian
-  (grams)**.
+- Poll ~1/s: send the fixed 4-byte command **`AA 14 C3 3C`**, read the reply, **weight = reply
+  bytes [2:3], big-endian (grams)**.
 - Calibration (empty/full/critical/tare) is set over BLE; see [`PROTOCOL.md`](./PROTOCOL.md).
 
 ## Hood
@@ -68,6 +70,20 @@ External 4-pin peripheral (`GND, +5V, RX, TX`) with its own STM32F030; the grill
 - **Hood sensor: GPIO34** (input; reed/hall — open/close).
 - **Hood light: GPIO21** (LEDC PWM); switched against ambient brightness vs. the
   `hoodlightThresholdPercentage` setting.
+
+## Front panel — no graphical display
+
+The front panel is **status LEDs + buttons only** — there is **no graphical/LCD display** on this
+board. A `comhub` task runs a connection-state machine (disconnected / pairing / connecting /
+connected) and drives the status LEDs; a button task reads the buttons (short/long press). What looked
+at first like a display-driver init turned out to be the WiFi / `esp_netif` / `esp_event` plumbing
+(it registers WiFi/IP event handlers that feed the LED state machine).
+
+- **Buttons: GPIO13, GPIO33** (interrupt, debounced, short/long press).
+- **Status LEDs: GPIO25, GPIO26** (WiFi/BT, blink patterns for connection state).
+
+So an ESPHome replacement doesn't need to reproduce a screen: buttons → `binary_sensor`, status LEDs
+→ `output`/`light`, connection logic → Home Assistant automations.
 
 ## Still open (needs a physical board)
 

@@ -1,0 +1,142 @@
+# Otto Wilde G32 Connected — ESPHome starter (UNTESTED DRAFT)
+# ---------------------------------------------------------------------------
+# Replaces the vendor firmware on the grill's own ESP32 so everything runs
+# locally in Home Assistant. Pins/peripherals are reverse-engineered from the
+# vendor firmware — see ../HARDWARE.md. This is a STARTING SKELETON.
+#
+# !!! DO NOT FLASH until you have, over serial (esptool):
+#     1. confirmed Secure Boot AND Flash Encryption are OFF
+#        (SECURE_BOOT_EN, FLASH_CRYPT_CNT / SPI_BOOT_CRYPT_CNT == 0), and
+#     2. taken a FULL flash dump (bootloader + partitions + NVS) as a restore
+#        image. There is no known recovery path otherwise.
+#
+# Status of the parts below:
+#   - core probes (4x MAX6675)   : should work as-is (stock component)
+#   - GasBuddy (UART)            : works as a polled template sensor
+#   - gas LEDs / hood / buttons  : stock components, real pins
+#   - grill ZONES (ch 0-3)       : NOT a stock chip -> custom component TODO
+# ---------------------------------------------------------------------------
+
+esphome:
+  name: g32-grill
+
+esp32:
+  board: esp32dev        # classic ESP32 (Ai-Thinker ESP32-S module)
+  framework:
+    type: arduino
+
+logger:
+api:
+ota:
+  platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+# --- Temperature SPI bus (bit-banged on the stock board; HW SPI here) --------
+# CLK=GPIO18, MOSI=GPIO23, MISO=GPIO19. MAX6675 only needs CLK+MISO+CS.
+spi:
+  clk_pin: GPIO18
+  miso_pin: GPIO19
+  mosi_pin: GPIO23       # only used by the zone converters (see TODO below)
+
+sensor:
+  # --- Core probes: 4x MAX6675, one CS each (ch 4-7) ---
+  - platform: max6675
+    name: "Core probe 1"
+    cs_pin: GPIO22
+    update_interval: 2s
+  - platform: max6675
+    name: "Core probe 2"
+    cs_pin: GPIO32
+    update_interval: 2s
+  - platform: max6675
+    name: "Core probe 3"
+    cs_pin: GPIO5
+    update_interval: 2s
+  - platform: max6675
+    name: "Core probe 4"
+    cs_pin: GPIO16
+    update_interval: 2s
+
+  # --- GasBuddy weight (UART1, poll AA 14 C3 3C, weight = reply[2:3] BE grams) ---
+  - platform: template
+    name: "Gas bottle weight"
+    id: gas_weight
+    unit_of_measurement: "g"
+    accuracy_decimals: 0
+    update_interval: never   # published by the interval below
+
+  # --- Grill ZONES (ch 0-3): TODO custom component ---
+  # Two register-configured 2-channel converters, CS GPIO17 (ch0/1) and GPIO4
+  # (ch2/3), shared bus CLK18/MOSI23/MISO19. Init writes regs 0x20<-0x08,
+  # 0x10<-0x44, 0x11<-0x44; per channel: select (busy-poll) -> 50ms -> 3x 16-bit
+  # read -> Type-K polynomial + cold-junction in software. The full bit-bang
+  # sequence is documented; reproduce it in a custom component. The exact chip
+  # marking is a nice confirmation but not required.
+
+uart:
+  id: uart_gasbuddy
+  tx_pin: GPIO2
+  rx_pin: GPIO15
+  baud_rate: 9600
+
+interval:
+  - interval: 1s
+    then:
+      - uart.write:
+          id: uart_gasbuddy
+          data: [0xAA, 0x14, 0xC3, 0x3C]
+      - delay: 100ms
+      - lambda: |-
+          const int n = id(uart_gasbuddy).available();
+          if (n >= 4) {
+            uint8_t buf[64];
+            int got = 0;
+            while (id(uart_gasbuddy).available() && got < (int)sizeof(buf))
+              id(uart_gasbuddy).read_byte(&buf[got++]);
+            // weight = bytes [2:3], big-endian, grams
+            uint16_t grams = (uint16_t(buf[2]) << 8) | buf[3];
+            id(gas_weight).publish_state(grams);
+          }
+
+binary_sensor:
+  - platform: gpio
+    name: "Hood open"
+    pin:
+      number: GPIO34        # input-only, no pullup
+  - platform: gpio
+    name: "Button 1"
+    pin:
+      number: GPIO13
+      mode: { input: true, pullup: true }
+      inverted: true
+  - platform: gpio
+    name: "Button 2"
+    pin:
+      number: GPIO33
+      mode: { input: true, pullup: true }
+      inverted: true
+
+output:
+  - platform: gpio
+    pin: GPIO27
+    id: gas_led_1
+  - platform: gpio
+    pin: GPIO14
+    id: gas_led_2
+  - platform: gpio
+    pin: GPIO25
+    id: status_led_1          # WiFi/BT status LED
+  - platform: gpio
+    pin: GPIO26
+    id: status_led_2
+  - platform: ledc
+    pin: GPIO21
+    id: hood_light_pwm        # hood light (PWM)
+
+light:
+  - platform: monochromatic
+    name: "Hood light"
+    output: hood_light_pwm

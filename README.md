@@ -35,7 +35,10 @@ grill), with a clean, shared protocol reference as the common base.
   socket, and how the pieces fit. Derived from the decompiled app (Flutter) and ESP32 firmware
   (Ghidra/Xtensa), cross-checked against community work.
 - **[`HARDWARE.md`](./HARDWARE.md)** — the controller's GPIO / peripheral map (SPI pins + chip-selects,
-  thermocouple converters, GasBuddy UART, hood), for the open-firmware / ESPHome path.
+  thermocouple converters, GasBuddy UART, hood, front panel), for the open-firmware / ESPHome path.
+- **[`esphome/`](./esphome)** — a starter ESPHome config (`g32.yaml`) using the real pins: 4× MAX6675
+  probes, GasBuddy UART, gas LEDs, hood, buttons, status LEDs. Untested draft — read its warning
+  before flashing.
 - **[`owgctl/`](./owgctl)** — a small Go tool:
   - **local, cloud-free:** `ble scan` / `ble read` (→ MQTT / Home Assistant), `ble set` (control),
     `decode` / `replay` (offline), `serve-socket` (experimental local cloud-socket capture/replacement).
