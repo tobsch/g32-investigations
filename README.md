@@ -34,6 +34,8 @@ grill), with a clean, shared protocol reference as the common base.
   (9elements) and the legacy 28-byte frame, read + write formats, gas-scale calibration, the WiFi
   socket, and how the pieces fit. Derived from the decompiled app (Flutter) and ESP32 firmware
   (Ghidra/Xtensa), cross-checked against community work.
+- **[`HARDWARE.md`](./HARDWARE.md)** — the controller's GPIO / peripheral map (SPI pins + chip-selects,
+  thermocouple converters, GasBuddy UART, hood), for the open-firmware / ESPHome path.
 - **[`owgctl/`](./owgctl)** — a small Go tool:
   - **local, cloud-free:** `ble scan` / `ble read` (→ MQTT / Home Assistant), `ble set` (control),
     `decode` / `replay` (offline), `serve-socket` (experimental local cloud-socket capture/replacement).
@@ -64,9 +66,15 @@ From firmware decompilation (to be confirmed by opening a grill):
   **STM32F030** + ADCs; the grill polls it for a finished weight.
 - The electronics live in the **control panel (OPS panel)**.
 
-Open questions that need a teardown: the exact thermocouple converter chip (not legible in any
-available photo) + MISO/CS pins, and the ESP32's **Secure Boot / flash-encryption** status (the
-go/no-go for flashing custom firmware).
+The full GPIO / peripheral map (SPI pins, per-channel chip-selects, GasBuddy UART, hood) is in
+**[`HARDWARE.md`](./HARDWARE.md)**, reverse-engineered from the firmware. Headline: temperature is a
+bit-banged SPI bus (CLK 18 / MOSI 23 / MISO 19), core probes are **4× MAX6675**, zones are two
+register-configured converters; GasBuddy is **UART1 (TX 2 / RX 15, 9600)**.
+
+The one thing that still needs a physical board: the ESP32's **Secure Boot / flash-encryption**
+status (the go/no-go for flashing custom firmware) — the vendor OTA image is unsigned, which hints
+Secure Boot is off, but only the eFuses are definitive. A spare/donor controller board would let this
+be settled without opening a working grill.
 
 **Serial access** (for flashing ESPHome / reading eFuses): solder to the ESP32-S pads `TXD0` (GPIO1),
 `RXD0` (GPIO3), `GND`; for download mode also `IO0` (pull low at reset) and `EN`. Use a **3.3 V**
