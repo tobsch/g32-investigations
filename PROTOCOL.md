@@ -31,7 +31,7 @@ Access: **N** = subscribe/notify, **R** = read, **W** = write-with-response.
 ### Temperature — service `181A`
 | Characteristic | UUID | Access | Format |
 |---|---|---|---|
-| temperatureMeasurement | `2a1c` | N | N×3 bytes: `[type][uint16 BE °C]`; `type>0`=zone, `type==0`=probe; index = block# & 3 |
+| temperatureMeasurement | `2a1c` | N/R | N×3 bytes: `[type][uint16 BE centi-°C]`; `type>0`=zone, `type==0`=probe; index = block# & 3. **Value is centi-°C (÷100)** — verified on hardware (fw 1.0.5): `0x0A0B=2571` → 25.71 °C. Probe-not-plugged sentinel = **`0xDCDC`**. Also directly readable (one-shot). |
 | highTemperatureWarningActive | `1f168db3-72ba-4806-84cc-e1c310898566` | N | bool (byte>0); firmware ≥1.2.0 |
 | highTemperatureWarningEnabled | `1f168db4-…` | R/W | bool; firmware ≥1.4.0 |
 | toggleCookingSessionRecording | `1f168db0-…` | R/W | 1 byte (start/stop recording) |
@@ -47,33 +47,54 @@ Access: **N** = subscribe/notify, **R** = read, **W** = write-with-response.
 ### Gas scale (GasBuddy) — service `181D`
 | Characteristic | UUID | Access | Format |
 |---|---|---|---|
-| weightMeasurement | `2a9d` | N | uint16 BE, grams (raw weight) |
-| gasbuddyPercent | `64ebc8a5-e9a4-11ed-a05b-0242ac120003` | N | uint8 % |
-| gasbuddyConnected | `64ebc8a9-…` | N | bool; firmware ≥1.2.0 |
-| gasbuddyBottleWeight (empty-tank weight) | `64ebc8a3-…` | R/W | uint16 BE, grams |
-| gasbuddyFullWeight (capacity) | `64ebc8a4-…` | R/W | uint16 BE, grams |
-| gasbuddyCriticalPercent | `64ebc8a6-…` | R/W | uint8 % |
+| weightMeasurement | `2a9d` | N/R | uint16 BE, grams (raw weight) |
+| weightScaleFeature | `2a9e` | — | standard GATT Weight Scale Feature (present on hardware) |
+| gasbuddyPercent | `64ebc8a5-e9a4-11ed-a05b-0242ac120003` | N/R | uint8 % |
+| gasbuddyConnected | `64ebc8a9-…` | N | bool; firmware ≥1.2.0 (**absent on fw 1.0.5**) |
+| gasbuddyBottleWeight (empty-tank weight) | `64ebc8a3-…` | W | uint16 BE, grams (write-only on fw 1.0.5) |
+| gasbuddyFullWeight (capacity) | `64ebc8a4-…` | W | uint16 BE, grams |
+| gasbuddyCriticalPercent | `64ebc8a6-…` | W | uint8 % |
 | gasbuddyTare | `64ebc8a7-…` | R | app reads the current raw value and uses it as the tare reference |
+| (unnamed) | `64ebc8a8-…` | R | uint8; **undocumented**, reads `0x01` on fw 1.0.5 (purpose unknown) |
 
 ### Device info — service `180A`
 | Characteristic | UUID | Access | Format |
 |---|---|---|---|
+| modelNumber | `2a24` | R | UTF-8 (`"G32"`) |
 | serialNumber | `2a25` | R | UTF-8 |
-| firmwareSemanticVersion | `2a26` | R | UTF-8 (e.g. `1.4.5`) |
-| signalStrength | `5f8b9bdc-86f7-4c68-9dce-3d1d4cb21b95` | N | int8, dBm |
-| createErrorLog / errorChunksAvailable / errorCodesReadChunk | `5f8b9bd0` / `5f8b9bda` / `5f8b9bdb` | — | MCU error-log readout |
+| firmwareSemanticVersion | `2a26` | R | UTF-8 (e.g. `1.4.5`; `1.0.5` on the verified unit) |
+| manufacturerName | `2a29` | R | UTF-8 (`"Otto Wilde Grillers"`) |
+| signalStrength | `5f8b9bdc-86f7-4c68-9dce-3d1d4cb21b95` | N/R | int8, dBm |
+| createErrorLog / errorChunksAvailable / errorCodesReadChunk | `5f8b9bd0` / `5f8b9bda` / `5f8b9bdb` | R | MCU error-log readout |
 
 ### Device management — service `830e02f4-843b-49c3-a4fa-613587247e6c`
 | Characteristic | UUID | Access | Format |
 |---|---|---|---|
-| grillMode | `830e02f7-…` | W | uint8: `0`=direct, `1..3`=indirect |
+| grillMode | `830e02f7-…` | R/W | uint8: `0`=direct, `1..3`=indirect (also readable on hardware) |
 | resetWifi | `830e02f5-…` | W | 1 byte `0x02` (triggers WiFi reprovisioning) |
 | pop | `830e02f6-…` | R | UTF-8 onboarding/proof-of-possession key |
 
 ### OTA — service `64cd0d4e-2f66-4e6f-b1af-fac03a604018`
-`otaControl` `64cd0d41-…` (1-byte control codes) and `otaData` `64cd0d42-…` (chunked image).
+`otaControl` `64cd0d41-…` (1-byte control codes), `otaData` `64cd0d42-…` (chunked image), and a third
+char `64cd0d43-…` (R, reads `0x01` on fw 1.0.5; **undocumented**, likely an OTA status/ready flag).
 MTU 247, 244-byte chunks. Control codes: 1=requestBle start, 3/4=ack/nak, 5=done, 6/7=doneAck/Nak.
 **No checksum/signature check on the app side.** Do not flash unverified images without a recovery path.
+
+---
+
+## Verified on hardware (fw 1.0.5, Oct 2026)
+
+Read over BLE from a real 9elements grill (`OWG-G32C-…`) with `owgctl ble dump`:
+
+- **Temperatures are centi-°C** (÷100), not whole °C — the app divides by 100. Probe-not-plugged
+  sentinel is `0xDCDC` (the 9elements analogue of the legacy `1500`).
+- **No pairing/bonding needed** to connect, subscribe, or read.
+- **Characteristic set is firmware-gated**: fw 1.0.5 *lacks* `1f168db3`/`1f168db4` (high-temp warning,
+  ≥1.2.0/≥1.4.0), `e1255ec2` (hood-light threshold, ≥1.1.0) and `64ebc8a9` (gasbuddyConnected, ≥1.2.0).
+- **9elements devices also expose the legacy service** (`dc0f41ea`): its notify char `dc0f41e2` is even
+  directly *readable*, returning a ~32-byte frame (serial, temps, gas, hood, light, **fw version code**).
+  On a 9elements unit that frame can be a static/compat snapshot (not the live zone temps) — the live
+  data comes via the 9elements characteristics. Useful as a read-only fallback.
 
 ---
 

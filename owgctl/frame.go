@@ -27,6 +27,10 @@ const (
 	// probeUnplugged ist der Rohwert, den die App als "Fühler nicht gesteckt"
 	// interpretiert (1500.0 °C).
 	probeUnplugged = 1500.0
+
+	// sentinel9Elements ist der 9elements-Rohwert für "Fühler nicht gesteckt"
+	// (belegt am Gerät: 0xDCDC), Pendant zum Legacy-1500.
+	sentinel9Elements = 0xDCDC
 )
 
 // frameLengths sind die bekannten Gesamtlängen des rohen Frames je Firmware.
@@ -158,10 +162,17 @@ func Decode9ElementsTemps(v []byte) ([]SensorReading, error) {
 		if block[0] > 0 {
 			typ = "zone"
 		}
+		// Rohwert ist centi-°C (belegt an echter Hardware, Firmware 1.0.5:
+		// 0x0A0B=2571 → 25,71 °C Umgebung). Auf ganze °C runden.
+		raw := binary.BigEndian.Uint16(block[1:3])
+		temp := (int(raw) + 50) / 100
+		if raw == sentinel9Elements { // "Fühler nicht gesteckt"
+			temp = int(probeUnplugged) // 1500, einheitlich mit dem Legacy-Sentinel
+		}
 		out = append(out, SensorReading{
 			Type:  typ,
 			Index: n & 3,
-			TempC: int(binary.BigEndian.Uint16(block[1:3])),
+			TempC: temp,
 		})
 	}
 	return out, nil

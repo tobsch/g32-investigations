@@ -55,6 +55,9 @@ Befehle:
   export                   ALLES sichern: Grills + Firmware + Sessions (--out DIR)
   decode <hex>             Live-Frame offline dekodieren (ohne Grill, ohne Konto)
   ble scan                 lokal per Bluetooth nach Grills suchen
+  ble info [namefilter]    Einmal verbinden und alle lesbaren Werte als JSON
+                           ausgeben (Firmware, Serial, Gas-Kalibrierung, Haube/
+                           Licht, Modus). Gut für idle/Testboards ohne Live-Push.
   ble read [namefilter]    Grill lokal auslesen, Live-Daten als JSON-Zeilen
                            (--mqtt tcp://host:1883 → Home Assistant statt stdout)
                            (--raw datei.hex → Rohframes mitschneiden, Legacy)

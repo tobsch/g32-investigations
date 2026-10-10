@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -31,6 +32,13 @@ var (
 	uuidInfoService   = bluetooth.New16BitUUID(0x180A)
 	uuidMgmtService   = mustUUID("830e02f4-843b-49c3-a4fa-613587247e6c")
 	uuidGrillMode     = mustUUID("830e02f7-843b-49c3-a4fa-613587247e6c")
+	uuidPop           = mustUUID("830e02f6-843b-49c3-a4fa-613587247e6c")
+
+	// Gas-Kalibrierung (lesbar), für 'ble info'
+	uuidGasBottleWeight = mustUUID("64ebc8a3-e9a4-11ed-a05b-0242ac120003")
+	uuidGasFullWeight   = mustUUID("64ebc8a4-e9a4-11ed-a05b-0242ac120003")
+	uuidGasCriticalPct  = mustUUID("64ebc8a6-e9a4-11ed-a05b-0242ac120003")
+	uuidGasTare         = mustUUID("64ebc8a7-e9a4-11ed-a05b-0242ac120003")
 	// Characteristics
 	uuidTempMeasure     = bluetooth.New16BitUUID(0x2A1C)
 	uuidHoodStatus      = mustUUID("e1255ec1-6199-44ab-b78e-08ec262cea4b")
@@ -92,11 +100,190 @@ func cmdBLE(ctx context.Context, opt options) error {
 			fmt.Printf("Rohframes → %s (später mit 'replay' erneut analysierbar)\n", opt.raw)
 		}
 		return bleRead(ctx, adapter, filter, sk, rawW)
+	case "info":
+		return bleInfo(ctx, adapter, filter)
+	case "dump":
+		return bleDump(ctx, adapter, filter)
 	case "set":
 		return bleSet(ctx, adapter, opt)
 	default:
-		return fmt.Errorf("Aufruf: owgctl ble <scan|read|set> [...]")
+		return fmt.Errorf("Aufruf: owgctl ble <scan|read|info|set> [...]")
 	}
+}
+
+// bleDump entdeckt ALLE Services und Characteristics (auch undokumentierte),
+// liest jede lesbare einmal und gibt UUID + Rohbytes + Länge aus. Rein lesend.
+// Das POP (830e02f6…) wird redigiert (Geräte-Secret).
+func bleDump(ctx context.Context, a *bluetooth.Adapter, filter string) error {
+	hit, err := findGrill(ctx, a, filter)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "Verbinde mit %s (%s) ...\n", hit.name, hit.address.String())
+	dev, err := a.Connect(hit.address, bluetooth.ConnectionParams{})
+	if err != nil {
+		return fmt.Errorf("Verbindung: %w", err)
+	}
+	defer dev.Disconnect()
+
+	svcs, err := dev.DiscoverServices(nil)
+	if err != nil {
+		return fmt.Errorf("Service-Discovery: %w", err)
+	}
+	fmt.Printf("# %s  (%s, %d Services)\n", hit.name, hit.address.String(), len(svcs))
+	for _, svc := range svcs {
+		fmt.Printf("\nService %s\n", svc.UUID().String())
+		chars, err := svc.DiscoverCharacteristics(nil)
+		if err != nil {
+			fmt.Printf("  (Characteristics-Discovery fehlgeschlagen: %v)\n", err)
+			continue
+		}
+		for _, c := range chars {
+			u := c.UUID().String()
+			if strings.HasPrefix(u, "830e02f6") {
+				fmt.Printf("  char %s  = (POP, redigiert)\n", u)
+				continue
+			}
+			buf := make([]byte, 256)
+			n, err := c.Read(buf)
+			if err != nil {
+				fmt.Printf("  char %s  = (nicht lesbar: notify/write-only)\n", u)
+				continue
+			}
+			b := buf[:n]
+			ascii := ""
+			if isAllPrintable(b) {
+				ascii = "  \"" + string(b) + "\""
+			}
+			fmt.Printf("  char %s  (%2d B) = %x%s\n", u, n, b, ascii)
+		}
+	}
+	return nil
+}
+
+func isAllPrintable(b []byte) bool {
+	if len(b) == 0 {
+		return false
+	}
+	for _, c := range b {
+		if c < 0x20 || c > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+// bleInfo verbindet einmal und liest alle lesbaren Characteristics (Geräteinfo,
+// POP, aktuelle Sensor-/Gaswerte, Gas-Kalibrierung) direkt aus — ohne auf
+// Notifications zu warten. Praktisch für idle Boards (Testgeräte außerhalb des
+// Grills), die keine Live-Daten pushen. Rein lesend.
+func bleInfo(ctx context.Context, a *bluetooth.Adapter, filter string) error {
+	hit, err := findGrill(ctx, a, filter)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "Verbinde mit %s (%s) ...\n", hit.name, hit.address.String())
+	dev, err := a.Connect(hit.address, bluetooth.ConnectionParams{})
+	if err != nil {
+		return fmt.Errorf("Verbindung: %w", err)
+	}
+	defer dev.Disconnect()
+
+	out := map[string]any{
+		"name":    hit.name,
+		"address": hit.address.String(),
+		"rssi":    hit.rssi,
+	}
+	if name9Elements.MatchString(hit.name) {
+		out["generation"] = "9elements"
+	} else {
+		out["generation"] = "legacy"
+		out["hinweis"] = "Legacy liefert Daten nur als Notification-Frame — 'ble read' nutzen."
+	}
+
+	// readRaw liest eine Characteristic einmal; ok=false wenn nicht vorhanden/lesbar.
+	readRaw := func(service, char bluetooth.UUID) ([]byte, bool) {
+		chars, err := discover(dev, service, char)
+		if err != nil {
+			return nil, false
+		}
+		c, ok := chars[char.String()]
+		if !ok {
+			return nil, false
+		}
+		buf := make([]byte, 64)
+		n, err := c.Read(buf)
+		if err != nil {
+			return nil, false
+		}
+		return buf[:n], true
+	}
+	str := func(key string, service, char bluetooth.UUID) {
+		if b, ok := readRaw(service, char); ok {
+			out[key] = strings.TrimRight(string(b), "\x00")
+		}
+	}
+	u8 := func(key string, service, char bluetooth.UUID) {
+		if b, ok := readRaw(service, char); ok && len(b) >= 1 {
+			out[key] = int(b[0])
+		}
+	}
+	boolean := func(key string, service, char bluetooth.UUID) {
+		if b, ok := readRaw(service, char); ok && len(b) >= 1 {
+			out[key] = b[0] > 0
+		}
+	}
+	u16be := func(key string, service, char bluetooth.UUID) {
+		if b, ok := readRaw(service, char); ok && len(b) >= 2 {
+			out[key] = int(binary.BigEndian.Uint16(b[:2]))
+		}
+	}
+
+	// Geräteinfo
+	str("serial", uuidInfoService, uuidSerialNumber)
+	str("firmware", uuidInfoService, uuidFirmwareVersion)
+	if b, ok := readRaw(uuidInfoService, uuidSignalStrength); ok && len(b) >= 1 {
+		out["signal_dbm"] = int(int8(b[0]))
+	}
+	// Verwaltung. POP ist ein Geräte-Secret → nur Vorhandensein/Länge zeigen, nie den Wert.
+	if b, ok := readRaw(uuidMgmtService, uuidPop); ok {
+		out["pop_present"] = true
+		out["pop_len"] = len(strings.TrimRight(string(b), "\x00"))
+	}
+	u8("grill_mode", uuidMgmtService, uuidGrillMode)
+	// Temperaturen (einmaliger Read des Measurement-Chars, falls lesbar)
+	if b, ok := readRaw(uuidTempService, uuidTempMeasure); ok {
+		out["temp_raw_hex"] = fmt.Sprintf("%x", b)
+		if readings, err := Decode9ElementsTemps(b); err == nil {
+			var zones, probes []int
+			for _, r := range readings {
+				if r.Type == "zone" {
+					zones = append(zones, r.TempC)
+				} else {
+					probes = append(probes, r.TempC)
+				}
+			}
+			out["zones_c"] = zones
+			out["probes_c"] = probes
+		}
+	}
+	boolean("temp_warning_enabled", uuidTempService, uuidTempWarnEnabled)
+	// Binärsensoren
+	boolean("hood_open", uuidBinaryService, uuidHoodStatus)
+	boolean("light_on", uuidBinaryService, uuidLightStatus)
+	u8("light_threshold_pct", uuidBinaryService, uuidLightThreshold)
+	// Gas
+	u8("gas_percent", uuidGasService, uuidGasPercent)
+	u16be("gas_weight_g", uuidGasService, uuidWeightMeasure)
+	boolean("gasbuddy_connected", uuidGasService, uuidGasConnected)
+	u16be("gas_bottle_weight_g", uuidGasService, uuidGasBottleWeight)
+	u16be("gas_full_weight_g", uuidGasService, uuidGasFullWeight)
+	u8("gas_critical_pct", uuidGasService, uuidGasCriticalPct)
+	u16be("gas_tare_g", uuidGasService, uuidGasTare)
+
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
 }
 
 // bleSet schreibt eine Einstellung an den Grill (nur 9elements-Firmware).
