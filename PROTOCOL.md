@@ -31,7 +31,7 @@ Access: **N** = subscribe/notify, **R** = read, **W** = write-with-response.
 ### Temperature — service `181A`
 | Characteristic | UUID | Access | Format |
 |---|---|---|---|
-| temperatureMeasurement | `2a1c` | N/R | N×3 bytes: `[type][uint16 BE centi-°C]`; `type>0`=zone, `type==0`=probe; index = block# & 3. **Value is centi-°C (÷100)** — verified on hardware (fw 1.0.5): `0x0A0B=2571` → 25.71 °C. Probe-not-plugged sentinel = **`0xDCDC`**. Also directly readable (one-shot). |
+| temperatureMeasurement | `2a1c` | N/R | N×3 bytes: `[type][uint16 BE]`; `type>0`=zone, `type==0`=probe; index = block# & 3. **Temperature = high byte, whole °C** (≈ `raw/256`). Verified at a known temperature on hardware (fw 1.4.5): probe in ~82 °C water → `0x52DC` (high byte `0x52`=82). The low byte read a constant `0xDC` (a marker, not a real fraction). **Not** centi-°C. Probe-not-plugged sentinel = **`0xDCDC`**. Also directly readable (one-shot). |
 | highTemperatureWarningActive | `1f168db3-72ba-4806-84cc-e1c310898566` | N | bool (byte>0); firmware ≥1.2.0 |
 | highTemperatureWarningEnabled | `1f168db4-…` | R/W | bool; firmware ≥1.4.0 |
 | toggleCookingSessionRecording | `1f168db0-…` | R/W | 1 byte (start/stop recording) |
@@ -89,9 +89,11 @@ Read over BLE with `owgctl ble dump` from two real 9elements grills.
 - **Characteristic set is firmware-gated — confirmed across both units.** fw 1.0.5 *lacks*
   `1f168db3`/`1f168db4` (high-temp warning, ≥1.2.0/≥1.4.0), `e1255ec2` (hood-light threshold, ≥1.1.0)
   and `64ebc8a9` (gasbuddyConnected, ≥1.2.0); fw 1.4.5 has all four. The `≥x.y` notes above match.
-- **Temperatures are centi-°C** (÷100), not whole °C — verified on fw 1.0.5 (`0x0A0B=2571` → 25.71 °C
-  ambient). Probe/zone not-plugged sentinel is `0xDCDC`, identical on both firmwares. (On the 1.4.5
-  unit all channels were unplugged, so the scale could not be re-measured there — same format though.)
+- **Temperature = high byte, whole °C** (≈ `raw/256`) — **not** centi. Verified against known
+  temperatures (fw 1.4.5, probe on P4): ~82 °C water → `0x52DC` (high `0x52`=82), cold outside
+  `0x0EDC`=14, mild ice water `0x0DDC`=13. The low byte read a constant `0xDC` on that channel
+  (a marker, not a real fraction). Probe/zone not-plugged sentinel is `0xDCDC`, identical on both
+  firmwares. (Absolute accuracy on a bare board out of the grill is approximate.)
 - **No pairing/bonding needed** to connect, subscribe, or read.
 - **9elements devices also expose the legacy service** (`dc0f41ea`): its notify char `dc0f41e2` is even
   directly *readable*, returning a ~32-byte frame (serial, temps, gas, hood, light, version code). On a

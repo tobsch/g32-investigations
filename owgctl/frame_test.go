@@ -79,9 +79,10 @@ func TestUnpluggedProbeIsNil(t *testing.T) {
 }
 
 func TestDecode9ElementsTemps(t *testing.T) {
-	// Rohwerte sind centi-°C. 2 Blöcke: Zone (typ=1) 22000=220,00 °C,
-	// Probe (typ=0) 6300=63,00 °C, plus ein nicht-gesteckter Probe (0xDCDC→1500).
-	v := []byte{0x01, 0x55, 0xF0, 0x00, 0x18, 0x9C, 0x00, 0xDC, 0xDC}
+	// Rohwerte sind uint16 BE als Q8.8 (°C = raw/256). 3 Blöcke:
+	// Zone (typ=1) 0x3200=50 °C, Probe (typ=0) 0x1E00=30 °C,
+	// plus ein nicht-gesteckter Probe (0xDCDC→1500).
+	v := []byte{0x01, 0x32, 0x00, 0x00, 0x1E, 0x00, 0x00, 0xDC, 0xDC}
 	got, err := Decode9ElementsTemps(v)
 	if err != nil {
 		t.Fatalf("decode: %v", err)
@@ -89,11 +90,11 @@ func TestDecode9ElementsTemps(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("erwartet 3 Sensoren, bekam %d", len(got))
 	}
-	if got[0].Type != "zone" || got[0].TempC != 220 {
-		t.Errorf("Block 0 = %+v, erwartet zone/220", got[0])
+	if got[0].Type != "zone" || got[0].TempC != 50 {
+		t.Errorf("Block 0 = %+v, erwartet zone/50", got[0])
 	}
-	if got[1].Type != "probe" || got[1].TempC != 63 {
-		t.Errorf("Block 1 = %+v, erwartet probe/63", got[1])
+	if got[1].Type != "probe" || got[1].TempC != 30 {
+		t.Errorf("Block 1 = %+v, erwartet probe/30", got[1])
 	}
 	if got[2].TempC != 1500 {
 		t.Errorf("Block 2 (0xDCDC) = %+v, erwartet 1500 (nicht gesteckt)", got[2])

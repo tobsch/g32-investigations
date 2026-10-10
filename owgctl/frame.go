@@ -162,11 +162,15 @@ func Decode9ElementsTemps(v []byte) ([]SensorReading, error) {
 		if block[0] > 0 {
 			typ = "zone"
 		}
-		// Rohwert ist centi-°C (belegt an echter Hardware, Firmware 1.0.5:
-		// 0x0A0B=2571 → 25,71 °C Umgebung). Auf ganze °C runden.
+		// uint16 BE, Hochbyte = ganze °C (das niedere Byte war am Gerät ein
+		// konstanter Marker 0xDC, kein echter Bruch → Floor raw/256 nimmt das
+		// Hochbyte). Belegt an echter Hardware mit bekannter Temperatur (Firmware
+		// 1.4.5, Fühler an P4): Quooker-Wasser 0x52DC → 82 °C, draußen kalt
+		// 0x0EDC → 14 °C, Leicht-Eiswasser 0x0DDC → 13 °C. NICHT centi
+		// (0x52DC/100 = 212 °C wäre für Wasser unmöglich).
 		raw := binary.BigEndian.Uint16(block[1:3])
-		temp := (int(raw) + 50) / 100
-		if raw == sentinel9Elements { // "Fühler nicht gesteckt"
+		temp := int(raw) / 256
+		if raw == sentinel9Elements { // "Fühler nicht gesteckt" (0xDCDC)
 			temp = int(probeUnplugged) // 1500, einheitlich mit dem Legacy-Sentinel
 		}
 		out = append(out, SensorReading{
