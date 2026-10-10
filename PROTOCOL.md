@@ -82,19 +82,23 @@ MTU 247, 244-byte chunks. Control codes: 1=requestBle start, 3/4=ack/nak, 5=done
 
 ---
 
-## Verified on hardware (fw 1.0.5, Oct 2026)
+## Verified on hardware (two 9elements units, fw 1.0.5 and 1.4.5, Oct 2026)
 
-Read over BLE from a real 9elements grill (`OWG-G32C-…`) with `owgctl ble dump`:
+Read over BLE with `owgctl ble dump` from two real 9elements grills.
 
-- **Temperatures are centi-°C** (÷100), not whole °C — the app divides by 100. Probe-not-plugged
-  sentinel is `0xDCDC` (the 9elements analogue of the legacy `1500`).
+- **Characteristic set is firmware-gated — confirmed across both units.** fw 1.0.5 *lacks*
+  `1f168db3`/`1f168db4` (high-temp warning, ≥1.2.0/≥1.4.0), `e1255ec2` (hood-light threshold, ≥1.1.0)
+  and `64ebc8a9` (gasbuddyConnected, ≥1.2.0); fw 1.4.5 has all four. The `≥x.y` notes above match.
+- **Temperatures are centi-°C** (÷100), not whole °C — verified on fw 1.0.5 (`0x0A0B=2571` → 25.71 °C
+  ambient). Probe/zone not-plugged sentinel is `0xDCDC`, identical on both firmwares. (On the 1.4.5
+  unit all channels were unplugged, so the scale could not be re-measured there — same format though.)
 - **No pairing/bonding needed** to connect, subscribe, or read.
-- **Characteristic set is firmware-gated**: fw 1.0.5 *lacks* `1f168db3`/`1f168db4` (high-temp warning,
-  ≥1.2.0/≥1.4.0), `e1255ec2` (hood-light threshold, ≥1.1.0) and `64ebc8a9` (gasbuddyConnected, ≥1.2.0).
 - **9elements devices also expose the legacy service** (`dc0f41ea`): its notify char `dc0f41e2` is even
-  directly *readable*, returning a ~32-byte frame (serial, temps, gas, hood, light, **fw version code**).
-  On a 9elements unit that frame can be a static/compat snapshot (not the live zone temps) — the live
-  data comes via the 9elements characteristics. Useful as a read-only fallback.
+  directly *readable*, returning a ~32-byte frame (serial, temps, gas, hood, light, version code). On a
+  9elements unit that frame can be a static/compat snapshot (not the live zone temps) — the live data
+  comes via the 9elements characteristics. Useful as a read-only fallback.
+- The legacy frame's **version-code byte is `0x0d`=13 on both fw 1.0.5 and 1.4.5** → it is a
+  protocol/HW revision, **not** the firmware semver.
 
 ---
 
