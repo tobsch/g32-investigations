@@ -74,6 +74,67 @@ Access: **N** = subscribe/notify, **R** = read, **W** = write-with-response.
 | resetWifi | `830e02f5-…` | W | 1 byte `0x02` (triggers WiFi reprovisioning) |
 | pop | `830e02f6-…` | R | UTF-8 onboarding/proof-of-possession key |
 
+### Grill mode — direct / indirect burners
+
+Characteristic `830e02f7` (service `830e02f4-…`). Write a single uint8; also readable.
+
+The G32 has **4 gas zones** (burners 1–4, left→right). `grill_mode` selects how they are
+"configured" for direct vs. indirect grilling:
+
+| Value | `CookingType` | Burners lit (direct) | Indirect zone | App UI label |
+|---|---|---|---|---|
+| `0` | `direct` | Each zone chosen individually (`directZoneStates`) | — | Direct mode |
+| `1` | `indirect1` | Zones 1 and 4 (outer) | Zones 2+3 (middle) | "Indirect setup **2**" |
+| `2` | `indirect2` | Zone 1 | Zones 2+3+4 | "Indirect setup **1**" |
+| `3` | `indirect3` | Zone 4 | Zones 1+2+3 | "Indirect setup **3**" |
+
+**What the app shows.** The dashboard indirect tile binds to a **single** zone store. There is no averaging in the UI:
+
+**What the grill sends.** That zone value is **not a raw sensor reading**. On firmware **≥ 1.2.0
+(incl. 1.4.5)** the grill recalculates the indirect-zone temperatures itself before they reach any
+client (BLE or socket):
+
+```
+T' = 0.5866 · avg(Zone1, Zone4) + 15.282
+```
+
+- The firmware always averages the two **outer** zones (Zone 1 + Zone 4), applies the linear
+  transform, and writes the result into the indirect-zone slots. On fw 1.4.5 this is the same for
+  **all three** indirect modes — even when Zone 1 or Zone 4 is itself part of the indirect group.
+- Example: Zone 1 = 300 °C, Zone 4 = 200 °C → avg 250 → reported ≈ 162 °C.
+- Evidence (fw 1.4.5): transform around VMA `0x400d983c`; mode-1 path at `0x400d984e`
+  (`l16ui` Z1 + `l16ui` Z4 → `add` → `srli …,1` → float → `×0.5866 + 15.282`); modes 2 and 3 use
+  the same average + transform. Zone slots in the struct: +0x08/+0x0a/+0x0c/+0x0e = Zones 1/2/3/4.
+  Constants `0.5866` / `15.282` are doubles in firmware at VMA `0x400d0808` / `0x400d0810`.
+
+```
+| Value | `CookingType` | Firmware input  | Result written to | Tile shows |
+| ----- | ------------- | --------------- | ----------------- | ---------- |
+| `1`   | `indirect1`   | avg(Z1, Z4)     | Zones 2+3         | Zone 2     |
+| `2`   | `indirect2`   | avg(Z1, Z4)     | Zones 2+3+4       | Zone 3     |
+| `3`   | `indirect3`   | avg(Z1, Z4)     | Zones 1+2+3       | Zone 2     |
+```
+
+**History — app-side calculation on older firmware.** The app contains the same transform
+(`TemperatureGrillModifier.modifyGrillData` @ `0x888434`) but **skips it on fw ≥ 1.2.0**
+(`areTemperaturesRecalculatedByMCU` @ `0xa4c94c`, `semanticVersion >= "1.2.0"`), because the
+grill already did it. On fw < 1.2.0 the app did the math and the inputs differed per mode:
+
+```
+| Value | `CookingType` | App input (fw < 1.2.0) | Written to  |
+| ----- | ------------- | ---------------------- | ----------- |
+| `1`   | `indirect1`   | avg(Z1, Z4)            | Zones 2+3   |
+| `2`   | `indirect2`   | Z1 only                | Zones 2+3+4 |
+| `3`   | `indirect3`   | Z4 only                | Zones 1+2+3 |
+```
+
+Notes:
+- `indirectZoneStores` (@ `0xd2c46c`) group membership (1→2+3, 2→2+3+4, 3→1+2+3) is used for
+  locking/layout and differs from the single store the tile displays.
+- Direct mode (`0`): zone values pass through unchanged.
+- *Not yet live-captured:* whether BLE notify and socket payload both already carry the rewritten
+  values (expected, since the firmware rewrites before sending).
+
 ### OTA — service `64cd0d4e-2f66-4e6f-b1af-fac03a604018`
 `otaControl` `64cd0d41-…` (1-byte control codes), `otaData` `64cd0d42-…` (chunked image), and a third
 char `64cd0d43-…` (R, reads `0x01` on fw 1.0.5; **undocumented**, likely an OTA status/ready flag).
